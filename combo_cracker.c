@@ -20,6 +20,7 @@
 typedef enum {
     ComboViewSubmenu,
     ComboViewCracker,
+    ComboViewThirdDigitInput,
     ComboViewResults,
     ComboViewTutorial,
     ComboViewAbout,
@@ -28,6 +29,7 @@ typedef enum {
 typedef enum {
     ComboEventIdRedrawScreen = 0,
     ComboEventIdCalculateCombo = 1,
+    ComboEventIdGoToThirdDigitInput = 2,
 } ComboEventId;
 
 typedef enum {
@@ -41,6 +43,7 @@ typedef struct {
     NotificationApp* notifications;
     Submenu* submenu;
     View* view_cracker;
+    Widget* widget_third_digit_input;
     Widget* widget_results;
     Widget* widget_tutorial;
     Widget* widget_about;
@@ -52,6 +55,9 @@ typedef struct {
     int first_lock;
     int second_lock;
     float resistance;
+    int third_digit_option1;
+    int third_digit_option2;
+    int correct_third_digit;
     int selected;
     char result[256];
 } ComboLockCrackerModel;
@@ -99,6 +105,24 @@ static void calculate_combo(ComboLockCrackerModel* model) {
         a = (a + 10) % 40;
         b = (b + 10) % 40;
     }
+
+    int temp_num1 = -1;
+    int temp_num2 = -1;
+
+    if(third_count >= 2) {
+        temp_num1 = third_position_values[0];
+        temp_num2 = third_position_values[1];
+    } else if(third_count == 1) {
+        temp_num1 = third_position_values[0];
+        temp_num2 = -1;
+    } else {
+        temp_num1 = -1;
+        temp_num2 = -1;
+    }
+
+    model->third_digit_option1 = temp_num1;
+    model->third_digit_option2 = temp_num2;
+
 
     int row_1 = (remainder + 2) % 40;
     int row_2 = (row_1 + 4) % 40;
@@ -158,6 +182,7 @@ static void calculate_combo(ComboLockCrackerModel* model) {
         if(written < 0 || written >= (int)(sizeof(model->result) - pos)) return;
         pos += written;
 
+
         if(i < third_count - 1) {
             written = snprintf(model->result + pos, sizeof(model->result) - pos, ", ");
             if(written < 0 || written >= (int)(sizeof(model->result) - pos)) return;
@@ -186,6 +211,17 @@ static uint32_t combo_navigation_exit_callback(void* _context) {
 static uint32_t combo_navigation_submenu_callback(void* _context) {
     UNUSED(_context);
     return ComboViewSubmenu;
+}
+
+/**
+ * @brief      callback for returning to cracker screen from third digit select.
+ * @details    this function is called when user press back button.
+ * @param      _context  the context - unused
+ * @return     previous view id
+ */
+static uint32_t combo_navigation_third_digit_callback(void* _context) {
+    UNUSED(_context);
+    return ComboViewCracker;
 }
 
 /**
@@ -258,7 +294,7 @@ static void combo_view_cracker_draw_callback(Canvas* canvas, void* model) {
         (my_model->selected == 2 ? ">" : ""));
     canvas_draw_str(canvas, value_x, 36, buf);
 
-    canvas_draw_str(canvas, text_x, 62, "OK to calculate");
+    canvas_draw_str(canvas, text_x, 62, "OK to proceed");
     canvas_draw_icon(canvas, icon_x, icon_y, &I_lock32x32);
 }
 
@@ -313,7 +349,7 @@ static bool combo_view_cracker_input_callback(InputEvent* event, void* context) 
                 redraw);
             break;
         case InputKeyOk:
-            view_dispatcher_send_custom_event(app->view_dispatcher, ComboEventIdCalculateCombo);
+            view_dispatcher_send_custom_event(app->view_dispatcher, ComboEventIdGoToThirdDigitInput);
             return true;
         default:
             break;
@@ -359,12 +395,46 @@ static bool combo_view_cracker_input_callback(InputEvent* event, void* context) 
  */
 static bool combo_view_cracker_custom_event_callback(uint32_t event, void* context) {
     ComboLockCrackerApp* app = (ComboLockCrackerApp*)context;
+    ComboLockCrackerModel* model = view_get_model(app->view_cracker);
 
     switch(event) {
     case ComboEventIdRedrawScreen: {
         bool redraw = true;
         with_view_model(
             app->view_cracker, ComboLockCrackerModel * _model, { UNUSED(_model); }, redraw);
+        return true;
+    }
+    case ComboEventIdGoToThirdDigitInput: {
+        bool redraw = true;
+
+        int BOX_PADDING = 15;
+        int BOX_WIDTH = 40;
+        int BOX_HEIGHT = 35;
+
+        char long_text[60];
+        snprintf(long_text, sizeof(long_text), "The numbers are %d, %d", model->third_digit_option1, model->third_digit_option2);
+
+        char option1[5];
+        char option2[5];
+        snprintf(option1, sizeof(option1), "%d", model->third_digit_option1);
+        snprintf(option2, sizeof(option2), "%d", model->third_digit_option2);
+
+        with_view_model(
+            app->view_cracker,
+            ComboLockCrackerModel * model,
+            {
+                calculate_combo(model);
+                widget_reset(app->widget_third_digit_input);
+                // widget_add_text_scroll_element(app->widget_third_digit_input, 0, 0, 128, 32, long_text);
+                widget_add_string_element(app->widget_third_digit_input, 60, 15, AlignCenter, AlignCenter, FontSecondary, long_text);
+                widget_add_rect_element(app->widget_third_digit_input, BOX_PADDING, BOX_HEIGHT, BOX_WIDTH, 25, 0, false);
+                widget_add_string_element(app->widget_third_digit_input, 34, 48, AlignCenter, AlignCenter, FontSecondary, option1);
+                widget_add_rect_element(app->widget_third_digit_input, 128 - BOX_PADDING - BOX_WIDTH, BOX_HEIGHT, BOX_WIDTH, 25, 0, false);
+                widget_add_string_element(app->widget_third_digit_input, 92, 48, AlignCenter, AlignCenter, FontSecondary, option2);
+            },
+            redraw);
+
+        view_dispatcher_switch_to_view(app->view_dispatcher, ComboViewThirdDigitInput);
         return true;
     }
     case ComboEventIdCalculateCombo: {
@@ -417,10 +487,19 @@ static ComboLockCrackerApp* combo_app_alloc() {
     model->first_lock = 0;
     model->second_lock = 0;
     model->resistance = 0.0f;
+    model->third_digit_option1 = 0;
+    model->third_digit_option2 = 0;
+    model->correct_third_digit = 0;
     model->selected = 0;
     model->result[0] = '\0';
 
     view_dispatcher_add_view(app->view_dispatcher, ComboViewCracker, app->view_cracker);
+
+    app->widget_third_digit_input = widget_alloc();
+    view_set_previous_callback(
+        widget_get_view(app->widget_third_digit_input), combo_navigation_third_digit_callback);
+    view_dispatcher_add_view(
+        app->view_dispatcher, ComboViewThirdDigitInput, widget_get_view(app->widget_third_digit_input));
 
     app->widget_results = widget_alloc();
     view_set_previous_callback(
@@ -490,6 +569,8 @@ static void combo_app_free(ComboLockCrackerApp* app) {
     widget_free(app->widget_about);
     view_dispatcher_remove_view(app->view_dispatcher, ComboViewTutorial);
     widget_free(app->widget_tutorial);
+    view_dispatcher_remove_view(app->view_dispatcher, ComboViewThirdDigitInput);
+    widget_free(app->widget_third_digit_input);
     view_dispatcher_remove_view(app->view_dispatcher, ComboViewResults);
     widget_free(app->widget_results);
     view_dispatcher_remove_view(app->view_dispatcher, ComboViewCracker);
